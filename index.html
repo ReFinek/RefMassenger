@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Общий чат</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        
+        .chat-container {
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 20px;
+            height: 80vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 10px;
+            margin-bottom: 10px;
+            background-color: #fafafa;
+        }
+        
+        .message {
+            margin-bottom: 15px;
+            padding: 10px;
+            border-radius: 8px;
+            background-color: #e3f2fd;
+            border-left: 4px solid #2196f3;
+            word-wrap: break-word;
+            word-break: break-word;
+            white-space: pre-wrap;
+            max-width: 100%;
+            overflow-wrap: break-word;
+        }
+        
+        .message-time {
+            font-size: 0.8em;
+            color: #666;
+            margin-right: 10px;
+            font-weight: bold;
+        }
+        
+        .input-area {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        
+        #messageInput {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 16px;
+            font-family: Arial, sans-serif;
+            resize: vertical;
+            min-height: 60px;
+            max-height: 300px;
+            box-sizing: border-box;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        
+        .button-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        #sendButton {
+            padding: 12px 25px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            flex-shrink: 0;
+        }
+        
+        #sendButton:hover {
+            background-color: #0056b3;
+        }
+        
+        #sendButton:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .char-counter {
+            font-size: 0.8em;
+            color: #666;
+            margin-left: 10px;
+        }
+        
+        .notification {
+            padding: 8px;
+            background-color: #4caf50;
+            color: white;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            text-align: center;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <h2>Общий чат</h2>
+        <div class="notification" id="notification">Сообщение отправлено!</div>
+        <div class="messages" id="messages"></div>
+        <div class="input-area">
+            <textarea 
+                id="messageInput" 
+                placeholder="Введите сообщение..." 
+                rows="3"
+            ></textarea>
+            <div class="button-container">
+                <div>
+                    <button id="sendButton" onclick="sendMessage()">Отправить</button>
+                    <span class="char-counter" id="charCounter">0 символов</span>
+                </div>
+                <button onclick="clearChat()" style="background-color: #ff4444; color: white; padding: 8px 15px; border: none; border-radius: 5px; cursor: pointer;">Очистить чат</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Используем localStorage для хранения сообщений
+        const STORAGE_KEY = 'chat_messages';
+        const MAX_MESSAGES = 200;
+        
+        // Загружаем сообщения при загрузке страницы
+        let messages = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+        
+        function displayMessages() {
+            const messagesContainer = document.getElementById('messages');
+            messagesContainer.innerHTML = '';
+            
+            if (messages.length === 0) {
+                messagesContainer.innerHTML = '<div class="message" style="text-align: center; color: #666;">Чат пуст. Напишите первое сообщение!</div>';
+                return;
+            }
+            
+            messages.forEach(msg => {
+                const messageDiv = document.createElement('div');
+                messageDiv.className = 'message';
+                
+                // Экранирование HTML для безопасности
+                const escapedText = escapeHtml(msg.text);
+                
+                messageDiv.innerHTML = `
+                    <div style="margin-bottom: 5px;">
+                        <span class="message-time">${msg.time}</span>
+                    </div>
+                    <div style="white-space: pre-wrap; word-wrap: break-word;">${escapedText}</div>
+                `;
+                messagesContainer.appendChild(messageDiv);
+            });
+            
+            // Прокручиваем вниз
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+        
+        // Функция для экранирования HTML
+        function escapeHtml(unsafe) {
+            return unsafe
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+        
+        function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const text = input.value.trim();
+            
+            if (text === '') {
+                showNotification('Введите сообщение!', 'error');
+                return;
+            }
+            
+            // Создаем новое сообщение
+            const newMessage = {
+                text: text,
+                time: new Date().toLocaleTimeString(),
+                timestamp: Date.now()
+            };
+            
+            // Добавляем сообщение
+            messages.push(newMessage);
+            
+            // Ограничиваем количество сообщений
+            if (messages.length > MAX_MESSAGES) {
+                messages = messages.slice(-MAX_MESSAGES);
+            }
+            
+            // Сохраняем в localStorage
+            try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
+                showNotification('Сообщение отправлено!', 'success');
+            } catch (e) {
+                if (e.name === 'QuotaExceededError') {
+                    // Если localStorage переполнен, удаляем старые сообщения
+                    messages = messages.slice(-50);
+                    localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
+                    showNotification('Сообщение отправлено (старые сообщения удалены)', 'warning');
+                }
+            }
+            
+            // Очищаем поле ввода
+            input.value = '';
+            updateCharCounter();
+            
+            // Обновляем отображение
+            displayMessages();
+            
+            // Фокус на поле ввода
+            input.focus();
+        }
+        
+        function showNotification(message, type = 'success') {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            
+            // Разные цвета для разных типов уведомлений
+            if (type === 'error') {
+                notification.style.backgroundColor = '#ff4444';
+            } else if (type === 'warning') {
+                notification.style.backgroundColor = '#ff9800';
+            } else {
+                notification.style.backgroundColor = '#4caf50';
+            }
+            
+            notification.style.display = 'block';
+            setTimeout(() => {
+                notification.style.display = 'none';
+            }, 3000);
+        }
+        
+        function updateCharCounter() {
+            const input = document.getElementById('messageInput');
+            const counter = document.getElementById('charCounter');
+            const length = input.value.length;
+            counter.textContent = `${length} символов`;
+            
+            // Меняем цвет при большом количестве символов
+            if (length > 1000) {
+                counter.style.color = '#ff4444';
+                counter.style.fontWeight = 'bold';
+            } else if (length > 500) {
+                counter.style.color = '#ff9800';
+            } else {
+                counter.style.color = '#666';
+            }
+        }
+        
+        function clearChat() {
+            if (confirm('Вы уверены, что хотите очистить весь чат?')) {
+                messages = [];
+                localStorage.removeItem(STORAGE_KEY);
+                displayMessages();
+                showNotification('Чат очищен', 'warning');
+            }
+        }
+        
+        // Обработчик нажатия Enter (Ctrl+Enter для отправки)
+        document.getElementById('messageInput').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && e.ctrlKey) {
+                sendMessage();
+            }
+        });
+        
+        // Счетчик символов
+        document.getElementById('messageInput').addEventListener('input', updateCharCounter);
+        
+        // Автообновление чата каждые 2 секунды
+        setInterval(displayMessages, 2000);
+        
+        // Автоматическое изменение высоты textarea
+        document.getElementById('messageInput').addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 300) + 'px';
+        });
+        
+        // Показываем сообщения при загрузке
+        displayMessages();
+        updateCharCounter();
+        
+        // Фокус на поле ввода
+        document.getElementById('messageInput').focus();
+    </script>
+</body>
+</html>

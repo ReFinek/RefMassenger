@@ -35,7 +35,7 @@
         
         .message {
             margin-bottom: 15px;
-            padding: 10px;
+            padding: 12px;
             border-radius: 8px;
             background-color: #e3f2fd;
             border-left: 4px solid #2196f3;
@@ -44,13 +44,79 @@
             white-space: pre-wrap;
             max-width: 100%;
             overflow-wrap: break-word;
+            position: relative;
+        }
+        
+        .message:hover {
+            background-color: #d1eaff;
+        }
+        
+        .message-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            padding-bottom: 5px;
+            border-bottom: 1px solid rgba(0,0,0,0.1);
         }
         
         .message-time {
             font-size: 0.8em;
             color: #666;
-            margin-right: 10px;
             font-weight: bold;
+        }
+        
+        .message-content {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            line-height: 1.4;
+            margin-bottom: 8px;
+        }
+        
+        .message-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid rgba(0,0,0,0.1);
+            opacity: 0.7;
+            transition: opacity 0.2s;
+        }
+        
+        .message:hover .message-actions {
+            opacity: 1;
+        }
+        
+        .action-btn {
+            padding: 4px 8px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.8em;
+            transition: background-color 0.2s;
+        }
+        
+        .copy-btn {
+            background-color: #4caf50;
+            color: white;
+        }
+        
+        .copy-btn:hover {
+            background-color: #45a049;
+        }
+        
+        .copy-btn.copied {
+            background-color: #2196f3;
+        }
+        
+        .delete-btn {
+            background-color: #ff4444;
+            color: white;
+        }
+        
+        .delete-btn:hover {
+            background-color: #cc0000;
         }
         
         .input-area {
@@ -115,6 +181,13 @@
             text-align: center;
             display: none;
         }
+        
+        .empty-chat {
+            text-align: center;
+            color: #666;
+            padding: 20px;
+            font-style: italic;
+        }
     </style>
 </head>
 <body>
@@ -151,22 +224,31 @@
             messagesContainer.innerHTML = '';
             
             if (messages.length === 0) {
-                messagesContainer.innerHTML = '<div class="message" style="text-align: center; color: #666;">Чат пуст. Напишите первое сообщение!</div>';
+                messagesContainer.innerHTML = '<div class="empty-chat">Чат пуст. Напишите первое сообщение!</div>';
                 return;
             }
             
-            messages.forEach(msg => {
+            messages.forEach((msg, index) => {
                 const messageDiv = document.createElement('div');
                 messageDiv.className = 'message';
+                messageDiv.dataset.index = index;
                 
                 // Экранирование HTML для безопасности
                 const escapedText = escapeHtml(msg.text);
                 
                 messageDiv.innerHTML = `
-                    <div style="margin-bottom: 5px;">
+                    <div class="message-header">
                         <span class="message-time">${msg.time}</span>
                     </div>
-                    <div style="white-space: pre-wrap; word-wrap: break-word;">${escapedText}</div>
+                    <div class="message-content">${escapedText}</div>
+                    <div class="message-actions">
+                        <button class="action-btn copy-btn" onclick="copyMessage(${index})" title="Копировать сообщение">
+                            📋 Копировать
+                        </button>
+                        <button class="action-btn delete-btn" onclick="deleteMessage(${index})" title="Удалить сообщение">
+                            🗑️ Удалить
+                        </button>
+                    </div>
                 `;
                 messagesContainer.appendChild(messageDiv);
             });
@@ -183,6 +265,61 @@
                 .replace(/>/g, "&gt;")
                 .replace(/"/g, "&quot;")
                 .replace(/'/g, "&#039;");
+        }
+        
+        // Функция копирования сообщения
+        function copyMessage(index) {
+            if (index >= 0 && index < messages.length) {
+                const messageText = messages[index].text;
+                
+                // Используем современный Clipboard API
+                navigator.clipboard.writeText(messageText).then(() => {
+                    showNotification('Сообщение скопировано в буфер обмена!', 'success');
+                    
+                    // Визуальный фидбек для кнопки копирования
+                    const copyBtn = document.querySelector(`.message[data-index="${index}"] .copy-btn`);
+                    const originalText = copyBtn.innerHTML;
+                    copyBtn.innerHTML = '✓ Скопировано!';
+                    copyBtn.classList.add('copied');
+                    
+                    setTimeout(() => {
+                        copyBtn.innerHTML = originalText;
+                        copyBtn.classList.remove('copied');
+                    }, 2000);
+                    
+                }).catch(err => {
+                    // Fallback для старых браузеров
+                    const textArea = document.createElement('textarea');
+                    textArea.value = messageText;
+                    document.body.appendChild(textArea);
+                    textArea.select();
+                    try {
+                        document.execCommand('copy');
+                        showNotification('Сообщение скопировано в буфер обмена!', 'success');
+                    } catch (err) {
+                        showNotification('Не удалось скопировать сообщение', 'error');
+                    }
+                    document.body.removeChild(textArea);
+                });
+            }
+        }
+        
+        // Функция удаления сообщения
+        function deleteMessage(index) {
+            if (index >= 0 && index < messages.length) {
+                if (confirm('Вы уверены, что хотите удалить это сообщение?')) {
+                    // Удаляем сообщение из массива
+                    messages.splice(index, 1);
+                    
+                    // Сохраняем изменения
+                    localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
+                    
+                    // Перерисовываем сообщения
+                    displayMessages();
+                    
+                    showNotification('Сообщение удалено', 'warning');
+                }
+            }
         }
         
         function sendMessage() {

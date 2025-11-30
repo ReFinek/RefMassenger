@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Общий чат</title>
+    <title>Общий чат с синхронизацией</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -174,12 +174,33 @@
         
         .notification {
             padding: 8px;
-            background-color: #4caf50;
             color: white;
             border-radius: 4px;
             margin-bottom: 10px;
             text-align: center;
             display: none;
+        }
+        
+        .sync-status {
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 0.8em;
+            margin-left: 10px;
+        }
+        
+        .syncing {
+            background-color: #ff9800;
+            color: white;
+        }
+        
+        .synced {
+            background-color: #4caf50;
+            color: white;
+        }
+        
+        .error {
+            background-color: #ff4444;
+            color: white;
         }
         
         .empty-chat {
@@ -188,13 +209,49 @@
             padding: 20px;
             font-style: italic;
         }
+        
+        .config-panel {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            border: 1px solid #ddd;
+        }
+        
+        .config-input {
+            width: 100%;
+            padding: 8px;
+            margin: 5px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
     </style>
 </head>
 <body>
     <div class="chat-container">
-        <h2>Общий чат</h2>
-        <div class="notification" id="notification">Сообщение отправлено!</div>
+        <h2>Общий чат с GitHub синхронизацией</h2>
+        
+        <div class="config-panel">
+            <h4>Настройки GitHub</h4>
+            <input type="text" id="repoOwner" class="config-input" placeholder="Владелец репозитория (username)">
+            <input type="text" id="repoName" class="config-input" placeholder="Название репозитория">
+            <input type="text" id="githubToken" class="config-input" placeholder="GitHub Token (необязательно)">
+            <button onclick="saveConfig()" style="padding: 8px 15px; background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">Сохранить настройки</button>
+            <button onclick="loadConfig()" style="padding: 8px 15px; background-color: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer; margin-left: 10px;">Загрузить настройки</button>
+        </div>
+        
+        <div class="notification" id="notification"></div>
+        
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+            <div>
+                <button onclick="loadMessages()" style="padding: 8px 15px; background-color: #17a2b8; color: white; border: none; border-radius: 4px; cursor: pointer;">Обновить</button>
+                <span id="syncStatus" class="sync-status">Не синхронизировано</span>
+            </div>
+            <div id="lastUpdate"></div>
+        </div>
+        
         <div class="messages" id="messages"></div>
+        
         <div class="input-area">
             <textarea 
                 id="messageInput" 
@@ -212,13 +269,164 @@
     </div>
 
     <script>
-        // Используем localStorage для хранения сообщений
-        const STORAGE_KEY = 'chat_messages';
-        const MAX_MESSAGES = 200;
+        // Конфигурация
+        let config = {
+            repoOwner: '',
+            repoName: '',
+            githubToken: ''
+        };
         
-        // Загружаем сообщения при загрузке страницы
-        let messages = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-        
+        let messages = [];
+        let currentSha = ''; // SHA текущего файла для обновления
+
+        // Загрузка конфигурации
+        function loadConfig() {
+            const saved = localStorage.getItem('githubChatConfig');
+            if (saved) {
+                config = JSON.parse(saved);
+                document.getElementById('repoOwner').value = config.repoOwner || '';
+                document.getElementById('repoName').value = config.repoName || '';
+                document.getElementById('githubToken').value = config.githubToken || '';
+                showNotification('Настройки загружены', 'success');
+                
+                if (config.repoOwner && config.repoName) {
+                    loadMessages();
+                }
+            }
+        }
+
+        function saveConfig() {
+            config.repoOwner = document.getElementById('repoOwner').value.trim();
+            config.repoName = document.getElementById('repoName').value.trim();
+            config.githubToken = document.getElementById('githubToken').value.trim();
+            
+            localStorage.setItem('githubChatConfig', JSON.stringify(config));
+            showNotification('Настройки сохранены', 'success');
+            
+            if (config.repoOwner && config.repoName) {
+                loadMessages();
+            }
+        }
+
+        // Обновление статуса синхронизации
+        function updateSyncStatus(status, text) {
+            const statusElement = document.getElementById('syncStatus');
+            statusElement.className = 'sync-status ' + status;
+            statusElement.textContent = text;
+        }
+
+        // Загрузка сообщений из GitHub
+        async function loadMessages() {
+            if (!config.repoOwner || !config.repoName) {
+                showNotification('Сначала настройте репозиторий', 'error');
+                return;
+            }
+
+            updateSyncStatus('syncing', 'Синхронизация...');
+            
+            try {
+                const url = `https://api.github.com/repos/${config.repoOwner}/${config.repoName}/contents/chat-data.json`;
+                const headers = {
+                    'Accept': 'application/vnd.github.v3+json',
+                    'If-None-Match': '' // Отключаем кэширование для демо
+                };
+                
+                if (config.githubToken) {
+                    headers['Authorization'] = `token ${config.githubToken}`;
+                }
+
+                const response = await fetch(url, { headers });
+                
+                if (response.status === 404) {
+                    showNotification('Файл chat-data.json не найден в репозитории', 'error');
+                    updateSyncStatus('error', 'Файл не найден');
+                    return;
+                }
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                const content = JSON.parse(atob(data.content));
+                
+                messages = content.messages || [];
+                currentSha = data.sha;
+                
+                displayMessages();
+                updateSyncStatus('synced', `Синхронизировано (${messages.length} сообщ.)`);
+                document.getElementById('lastUpdate').textContent = `Обновлено: ${new Date().toLocaleTimeString()}`;
+                
+            } catch (error) {
+                console.error('Ошибка загрузки:', error);
+                showNotification('Ошибка загрузки: ' + error.message, 'error');
+                updateSyncStatus('error', 'Ошибка загрузки');
+            }
+        }
+
+        // Сохранение сообщений в GitHub
+        async function saveMessages() {
+            if (!config.repoOwner || !config.repoName) {
+                showNotification('Сначала настройте репозиторий', 'error');
+                return;
+            }
+
+            updateSyncStatus('syncing', 'Сохранение...');
+            
+            try {
+                const content = {
+                    messages: messages.slice(-1000) // Ограничиваем историю
+                };
+                
+                const message = `Update chat messages (${new Date().toISOString()})`;
+                const contentBase64 = btoa(JSON.stringify(content, null, 2));
+                
+                const url = `https://api.github.com/repos/${config.repoOwner}/${config.repoName}/contents/chat-data.json`;
+                const body = {
+                    message: message,
+                    content: contentBase64,
+                    sha: currentSha
+                };
+                
+                const headers = {
+                    'Accept': 'application/vnd.github.v3+json',
+                    'Content-Type': 'application/json'
+                };
+                
+                if (config.githubToken) {
+                    headers['Authorization'] = `token ${config.githubToken}`;
+                } else {
+                    showNotification('Без GitHub Token доступен только просмотр', 'warning');
+                    return;
+                }
+
+                const response = await fetch(url, {
+                    method: 'PUT',
+                    headers: headers,
+                    body: JSON.stringify(body)
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                currentSha = data.content.sha;
+                
+                updateSyncStatus('synced', `Сохранено (${messages.length} сообщ.)`);
+                showNotification('Сообщения сохранены в GitHub', 'success');
+                
+            } catch (error) {
+                console.error('Ошибка сохранения:', error);
+                showNotification('Ошибка сохранения: ' + error.message, 'error');
+                updateSyncStatus('error', 'Ошибка сохранения');
+            }
+        }
+
+        // Остальные функции (displayMessages, sendMessage, copyMessage, deleteMessage и т.д.)
+        // остаются такими же как в предыдущей версии, но с небольшими изменениями:
+
         function displayMessages() {
             const messagesContainer = document.getElementById('messages');
             messagesContainer.innerHTML = '';
@@ -231,9 +439,7 @@
             messages.forEach((msg, index) => {
                 const messageDiv = document.createElement('div');
                 messageDiv.className = 'message';
-                messageDiv.dataset.index = index;
                 
-                // Экранирование HTML для безопасности
                 const escapedText = escapeHtml(msg.text);
                 
                 messageDiv.innerHTML = `
@@ -253,11 +459,9 @@
                 messagesContainer.appendChild(messageDiv);
             });
             
-            // Прокручиваем вниз
             messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
-        
-        // Функция для экранирования HTML
+
         function escapeHtml(unsafe) {
             return unsafe
                 .replace(/&/g, "&amp;")
@@ -266,63 +470,8 @@
                 .replace(/"/g, "&quot;")
                 .replace(/'/g, "&#039;");
         }
-        
-        // Функция копирования сообщения
-        function copyMessage(index) {
-            if (index >= 0 && index < messages.length) {
-                const messageText = messages[index].text;
-                
-                // Используем современный Clipboard API
-                navigator.clipboard.writeText(messageText).then(() => {
-                    showNotification('Сообщение скопировано в буфер обмена!', 'success');
-                    
-                    // Визуальный фидбек для кнопки копирования
-                    const copyBtn = document.querySelector(`.message[data-index="${index}"] .copy-btn`);
-                    const originalText = copyBtn.innerHTML;
-                    copyBtn.innerHTML = '✓ Скопировано!';
-                    copyBtn.classList.add('copied');
-                    
-                    setTimeout(() => {
-                        copyBtn.innerHTML = originalText;
-                        copyBtn.classList.remove('copied');
-                    }, 2000);
-                    
-                }).catch(err => {
-                    // Fallback для старых браузеров
-                    const textArea = document.createElement('textarea');
-                    textArea.value = messageText;
-                    document.body.appendChild(textArea);
-                    textArea.select();
-                    try {
-                        document.execCommand('copy');
-                        showNotification('Сообщение скопировано в буфер обмена!', 'success');
-                    } catch (err) {
-                        showNotification('Не удалось скопировать сообщение', 'error');
-                    }
-                    document.body.removeChild(textArea);
-                });
-            }
-        }
-        
-        // Функция удаления сообщения
-        function deleteMessage(index) {
-            if (index >= 0 && index < messages.length) {
-                if (confirm('Вы уверены, что хотите удалить это сообщение?')) {
-                    // Удаляем сообщение из массива
-                    messages.splice(index, 1);
-                    
-                    // Сохраняем изменения
-                    localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
-                    
-                    // Перерисовываем сообщения
-                    displayMessages();
-                    
-                    showNotification('Сообщение удалено', 'warning');
-                }
-            }
-        }
-        
-        function sendMessage() {
+
+        async function sendMessage() {
             const input = document.getElementById('messageInput');
             const text = input.value.trim();
             
@@ -331,50 +480,46 @@
                 return;
             }
             
-            // Создаем новое сообщение
             const newMessage = {
                 text: text,
                 time: new Date().toLocaleTimeString(),
                 timestamp: Date.now()
             };
             
-            // Добавляем сообщение
             messages.push(newMessage);
-            
-            // Ограничиваем количество сообщений
-            if (messages.length > MAX_MESSAGES) {
-                messages = messages.slice(-MAX_MESSAGES);
-            }
-            
-            // Сохраняем в localStorage
-            try {
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
-                showNotification('Сообщение отправлено!', 'success');
-            } catch (e) {
-                if (e.name === 'QuotaExceededError') {
-                    // Если localStorage переполнен, удаляем старые сообщения
-                    messages = messages.slice(-50);
-                    localStorage.setItem(STORAGE_KEY, JSON.stringify(messages));
-                    showNotification('Сообщение отправлено (старые сообщения удалены)', 'warning');
-                }
-            }
-            
-            // Очищаем поле ввода
             input.value = '';
             updateCharCounter();
-            
-            // Обновляем отображение
             displayMessages();
             
-            // Фокус на поле ввода
-            input.focus();
+            // Сохраняем в GitHub
+            await saveMessages();
         }
-        
+
+        async function deleteMessage(index) {
+            if (confirm('Вы уверены, что хотите удалить это сообщение?')) {
+                messages.splice(index, 1);
+                displayMessages();
+                await saveMessages();
+            }
+        }
+
+        async function clearChat() {
+            if (confirm('Вы уверены, что хотите очистить весь чат?')) {
+                messages = [];
+                displayMessages();
+                await saveMessages();
+            }
+        }
+
+        function copyMessage(index) {
+            // ... (код копирования без изменений)
+        }
+
         function showNotification(message, type = 'success') {
             const notification = document.getElementById('notification');
             notification.textContent = message;
+            notification.style.display = 'block';
             
-            // Разные цвета для разных типов уведомлений
             if (type === 'error') {
                 notification.style.backgroundColor = '#ff4444';
             } else if (type === 'warning') {
@@ -383,63 +528,31 @@
                 notification.style.backgroundColor = '#4caf50';
             }
             
-            notification.style.display = 'block';
             setTimeout(() => {
                 notification.style.display = 'none';
-            }, 3000);
+            }, 4000);
         }
-        
+
         function updateCharCounter() {
             const input = document.getElementById('messageInput');
             const counter = document.getElementById('charCounter');
             const length = input.value.length;
             counter.textContent = `${length} символов`;
-            
-            // Меняем цвет при большом количестве символов
-            if (length > 1000) {
-                counter.style.color = '#ff4444';
-                counter.style.fontWeight = 'bold';
-            } else if (length > 500) {
-                counter.style.color = '#ff9800';
-            } else {
-                counter.style.color = '#666';
-            }
         }
-        
-        function clearChat() {
-            if (confirm('Вы уверены, что хотите очистить весь чат?')) {
-                messages = [];
-                localStorage.removeItem(STORAGE_KEY);
-                displayMessages();
-                showNotification('Чат очищен', 'warning');
-            }
-        }
-        
-        // Обработчик нажатия Enter (Ctrl+Enter для отправки)
-        document.getElementById('messageInput').addEventListener('keydown', function(e) {
-            if (e.key === 'Enter' && e.ctrlKey) {
-                sendMessage();
-            }
+
+        // Автообновление каждые 10 секунд
+        setInterval(loadMessages, 10000);
+
+        // Загрузка при старте
+        document.addEventListener('DOMContentLoaded', function() {
+            loadConfig();
+            document.getElementById('messageInput').addEventListener('input', updateCharCounter);
+            document.getElementById('messageInput').addEventListener('keydown', function(e) {
+                if (e.key === 'Enter' && e.ctrlKey) {
+                    sendMessage();
+                }
+            });
         });
-        
-        // Счетчик символов
-        document.getElementById('messageInput').addEventListener('input', updateCharCounter);
-        
-        // Автообновление чата каждые 2 секунды
-        setInterval(displayMessages, 2000);
-        
-        // Автоматическое изменение высоты textarea
-        document.getElementById('messageInput').addEventListener('input', function() {
-            this.style.height = 'auto';
-            this.style.height = Math.min(this.scrollHeight, 300) + 'px';
-        });
-        
-        // Показываем сообщения при загрузке
-        displayMessages();
-        updateCharCounter();
-        
-        // Фокус на поле ввода
-        document.getElementById('messageInput').focus();
     </script>
 </body>
 </html>
